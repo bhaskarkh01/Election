@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("4x29BQPwdRqbYWFNoT7YrN3SQfB9sYTFeBJejwsCqhYb");
 #[program]
 pub mod election {
     use super::*;
@@ -51,6 +51,22 @@ pub mod election {
                 return Err(ElectionError::PrivilegeNotAllowed.into());
             }
         }
+    }
+
+    pub fn vote(ctx: Context<Vote>) -> Result<()> {
+        let election = &mut ctx.accounts.election_data;
+    
+        require!(election.stage == ElectionStage::Voting,ElectionError::NotAtVotingStage);
+    
+        let candidate = &mut ctx.accounts.candidate_data;
+        let my_vote = &mut ctx.accounts.my_vote;
+    
+        candidate.votes += 1;
+        my_vote.id = candidate.id;
+        
+        election.record_vote(candidate.id,candidate.votes);
+
+        Ok(())
     }
 
 
@@ -163,8 +179,74 @@ impl ElectionData {
         self.stage = ElectionStage::Closed;
         Ok(())
     }
+
+    pub fn record_vote(&mut self,id: u64,votes: u64) {
+        if !self.winners_id.contains(&id) {
+            if self.winners_id.len() < self.winners_num as usize {
+                self.winners_id.push(id);
+                self.winners_votes.push(votes);            
+            } else {
+                let current_last_winner = (self.winners_num - 1) as usize;
+
+                if votes > self.winners_votes[current_last_winner] {
+                    self.winners_id[current_last_winner] = id;
+                    self.winners_votes[current_last_winner] = votes;
+                } else {
+                    return;
+                }
+            }
+        } else {
+            let index = self.winners_id.iter().position(|&r| r == id).unwrap();
+            self.winners_votes[index] += 1;
+        }
+        
+        //sorting votes in descending order if winners' votes are changed
+        let mut j = self.winners_id.iter().position(|&r| r == id).unwrap();
+
+        while j > 0 && self.winners_votes[j] > self.winners_votes[j-1] {
+
+            let vote_holder = self.winners_votes[j-1];
+            let id_holder = self.winners_id[j-1];
+
+            self.winners_votes[j-1] = self.winners_votes[j];
+            self.winners_votes[j] = vote_holder;
+
+            self.winners_id[j-1] = self.winners_id[j];
+            self.winners_id[j] = id_holder;
+
+            j -= 1;
+        }
+    }
 }
 
+
+#[derive(Accounts)]
+pub struct Vote<'info> {
+    #[account(
+        init,
+        payer=signer,
+        space=8+8,
+        seeds=[
+            b"voter",
+            signer.key().as_ref(),
+            election_data.key().as_ref()
+        ],
+        bump
+    )]
+    pub my_vote: Account<'info,MyVote>,
+    #[account(mut)]
+    pub candidate_data: Account<'info,CandidateData>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub election_data: Account<'info,ElectionData>,
+    pub system_program: Program<'info,System>
+}
+
+#[account]
+pub struct MyVote {
+    pub id: u64,
+}
 
 
 #[derive(AnchorDeserialize,AnchorSerialize,PartialEq,Eq,Clone)]
