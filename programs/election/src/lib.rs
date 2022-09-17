@@ -12,6 +12,30 @@ pub mod election {
         election.winners_num = winners;
         Ok(())
     }
+
+    pub fn apply(ctx: Context<Apply>) -> Result<()> {
+        let election = &mut ctx.accounts.election_data;
+    
+        require!(election.stage == ElectionStage::Application,ElectionError::ApplicationIsClosed);
+    
+        election.candidates += 1;
+        ctx.accounts.candidate_identity.id = election.candidates;
+        ctx.accounts.candidate_identity.pubkey = ctx.accounts.signer.key();
+        Ok(())
+    }
+    
+    pub fn register(ctx: Context<Register>) -> Result<()> {
+        let candidate = &mut ctx.accounts.candidate_data;
+    
+        candidate.votes = 0;
+        candidate.pubkey = ctx.accounts.signer.key();
+        candidate.id = ctx.accounts.candidate_identity.id;
+    
+        Ok(())
+    }
+
+
+
 }
 
 #[derive(Accounts)]
@@ -38,6 +62,63 @@ pub struct ElectionData {
     pub winners_votes: Vec<u64>,
 }
 
+#[derive(Accounts)]
+pub struct Apply<'info> {
+    #[account(
+        init,
+        payer=signer,
+        space=8+8+32,
+        seeds=[
+            b"candidate",
+            signer.key().as_ref(),
+            election_data.key().as_ref()
+        ],
+        bump
+    )]
+    pub candidate_identity: Account<'info,CandidateIdentity>,
+    #[account(mut)]
+    pub election_data: Account<'info,ElectionData>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    pub system_program: Program<'info,System>
+}
+
+#[derive(Accounts)]
+pub struct Register<'info> {
+    #[account(
+        init,
+        payer=signer,
+        space=8+8+8+32,
+        seeds=[
+            &(candidate_identity.id).to_be_bytes(),
+            election_data.key().as_ref()
+        ],
+        bump
+    )]
+    pub candidate_data: Account<'info,CandidateData>,
+    pub election_data: Account<'info,ElectionData>,
+    pub candidate_identity: Account<'info,CandidateIdentity>,
+    #[account(mut,address=candidate_identity.pubkey @ ElectionError::WrongPublicKey)]
+    pub signer: Signer<'info>,
+    pub system_program: Program<'info,System>
+}
+
+#[account]
+pub struct CandidateData {
+    pub votes: u64,
+    pub id: u64,
+    pub pubkey: Pubkey,
+}
+
+#[account]
+pub struct CandidateIdentity {
+    pub id: u64,
+    pub pubkey: Pubkey,
+}
+
+
+
+
 #[derive(AnchorDeserialize,AnchorSerialize,PartialEq,Eq,Clone)]
 pub enum ElectionStage {
     Application,
@@ -47,5 +128,7 @@ pub enum ElectionStage {
 
 #[error_code]
 pub enum ElectionError {
-    WinnerCountNotAllowed
+    WinnerCountNotAllowed,
+    ApplicationIsClosed,
+    WrongPublicKey,
 }
