@@ -35,6 +35,24 @@ pub mod election {
     }
 
 
+    pub fn change_stage(ctx: Context<ChangeStage>,new_stage: ElectionStage) -> Result<()> {
+        let election = &mut ctx.accounts.election_data;
+    
+        require!(election.stage != ElectionStage::Closed,ElectionError::ElectionIsClosed);
+    
+        match new_stage {
+            ElectionStage::Voting => {
+                return election.close_application();
+            },
+            ElectionStage::Closed => {
+                return election.close_voting();
+            },
+            ElectionStage::Application => {
+                return Err(ElectionError::PrivilegeNotAllowed.into());
+            }
+        }
+    }
+
 
 }
 
@@ -117,6 +135,36 @@ pub struct CandidateIdentity {
 }
 
 
+#[derive(Accounts)]
+pub struct ChangeStage<'info> {
+    #[account(mut)]
+    pub election_data: Account<'info,ElectionData>,
+    #[account(mut,address=election_data.initiator @ ElectionError::PrivilegeNotAllowed)]
+    pub signer: Signer<'info>
+}
+
+impl ElectionData {
+    pub fn close_application(&mut self) -> Result<()> {
+        require!(self.stage == ElectionStage::Application,ElectionError::ApplicationIsClosed);
+
+        if self.candidates <= self.winners_num as u64 {
+            for i in 1..self.candidates + 1 {
+                self.winners_id.push(i);
+                self.stage = ElectionStage::Closed;
+            }
+        } else {
+            self.stage = ElectionStage::Voting;
+        }
+        Ok(())
+    }
+
+    pub fn close_voting(&mut self) -> Result<()> {
+        require!(self.stage == ElectionStage::Voting,ElectionError::NotAtVotingStage);
+        self.stage = ElectionStage::Closed;
+        Ok(())
+    }
+}
+
 
 
 #[derive(AnchorDeserialize,AnchorSerialize,PartialEq,Eq,Clone)]
@@ -131,4 +179,7 @@ pub enum ElectionError {
     WinnerCountNotAllowed,
     ApplicationIsClosed,
     WrongPublicKey,
+    PrivilegeNotAllowed,
+    ElectionIsClosed,
+    NotAtVotingStage
 }
